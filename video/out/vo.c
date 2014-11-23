@@ -567,8 +567,10 @@ static bool render_frame(struct vo *vo)
     in->frame_queued = NULL;
 
     // The next time a flip (probably) happens.
-    int64_t next_vsync = prev_sync(vo, mp_time_us()) + in->vsync_interval;
+    int64_t prev_vsync = prev_sync(vo, mp_time_us());
+    int64_t next_vsync = prev_vsync + in->vsync_interval;
     int64_t end_time = pts + duration;
+
     MP_STATS(vo, "next_vsync %lld, pts %lld, img %d\n", next_vsync, pts, !!img);
 
     if (!(vo->global->opts->frame_dropping & 1) || !in->hasframe_rendered ||
@@ -590,7 +592,14 @@ static bool render_frame(struct vo *vo)
 
         MP_STATS(vo, "start video");
 
-        if (!in->vsync_timed) {
+        if (in->vsync_timed) {
+            struct vo_image_timing t = (struct vo_image_timing) {
+                .pts        = pts,
+                .prev_vsync = prev_vsync,
+                .next_vsync = next_vsync,
+            };
+            vo->driver->draw_image_timed(vo, img, &t);
+        } else {
             vo->driver->draw_image(vo, img);
         }
 
