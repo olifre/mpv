@@ -131,6 +131,9 @@ struct vo_internal {
     bool request_redraw;            // redraw request from player to VO
     bool want_redraw;               // redraw request from VO to player
     bool paused;
+    // XXX: find a good name for this
+    bool vsync_timed;               // the VO redraws itself as fast as possible
+                                    // at every vsync
     int queued_events;
 
     int64_t flip_queue_offset; // queue flip events at most this much in advance
@@ -492,7 +495,7 @@ bool vo_is_ready_for_frame(struct vo *vo, int64_t next_pts)
         if (next_pts > now)
             r = false;
         if (!in->wakeup_pts || next_pts < in->wakeup_pts) {
-            in->wakeup_pts = next_pts;
+            in->wakeup_pts = in->vsync_timed ? mp_time_us() : next_pts;
             wakeup_locked(vo);
         }
     }
@@ -513,7 +516,8 @@ void vo_queue_frame(struct vo *vo, struct mp_image *image,
     in->frame_queued = image;
     in->frame_pts = pts_us;
     in->frame_duration = duration;
-    in->wakeup_pts = in->frame_pts + MPMAX(duration, 0);
+    in->wakeup_pts = in->vsync_timed ?  mp_time_us() :
+                     in->frame_pts + MPMAX(duration, 0);
     wakeup_locked(vo);
     pthread_mutex_unlock(&in->lock);
 }
@@ -551,7 +555,8 @@ static bool render_frame(struct vo *vo)
     int64_t pts = in->frame_pts;
     int64_t duration = in->frame_duration;
     struct mp_image *img = in->frame_queued;
-    if (!img) {
+
+    if (!img && (!in->vsync_timed || in->paused)) {
         pthread_mutex_unlock(&in->lock);
         return false;
     }
@@ -564,6 +569,7 @@ static bool render_frame(struct vo *vo)
     // The next time a flip (probably) happens.
     int64_t next_vsync = prev_sync(vo, mp_time_us()) + in->vsync_interval;
     int64_t end_time = pts + duration;
+    MP_STATS(vo, "next_vsync %lld, pts %lld, img %d\n", next_vsync, pts, !!img);
 
     if (!(vo->global->opts->frame_dropping & 1) || !in->hasframe_rendered ||
         vo->driver->untimed || vo->driver->encode)
@@ -584,10 +590,12 @@ static bool render_frame(struct vo *vo)
 
         MP_STATS(vo, "start video");
 
-        vo->driver->draw_image(vo, img);
+        if (!in->vsync_timed) {
+            vo->driver->draw_image(vo, img);
+        }
 
         int64_t target = pts - in->flip_queue_offset;
-        while (1) {
+        while (!in->vsync_timed) {
             int64_t now = mp_time_us();
             if (target <= now)
                 break;
