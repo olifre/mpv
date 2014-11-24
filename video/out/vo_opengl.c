@@ -179,7 +179,7 @@ static void draw_image(struct vo *vo, mp_image_t *mpi)
 }
 
 static void draw_image_timed(struct vo *vo, mp_image_t *mpi,
-                             struct vo_image_timing *t)
+                             struct frame_timing *t)
 {
     struct gl_priv *p = vo->priv;
     GL *gl = p->gl;

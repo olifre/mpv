@@ -26,6 +26,7 @@
 #include <inttypes.h>
 #include <stdbool.h>
 
+#include "video/frame_timing.h"
 #include "video/img_format.h"
 #include "common/common.h"
 #include "options/options.h"
@@ -165,12 +166,6 @@ struct osd_state;
 struct mp_image;
 struct mp_image_params;
 
-struct vo_image_timing {
-    int64_t pts;
-    int64_t prev_vsync;
-    int64_t next_vsync;
-};
-
 struct vo_driver {
     // Encoding functionality, which can be invoked via --o only.
     bool encode;
@@ -222,7 +217,7 @@ struct vo_driver {
      * information
      */
     void (*draw_image_timed)(struct vo *vo, struct mp_image *mpi,
-                             struct vo_image_timing *t);
+                             struct frame_timing *t);
 
     /*
      * Blit/Flip buffer to the screen. Must be called after each frame!
