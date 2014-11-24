@@ -178,6 +178,35 @@ static void draw_image(struct vo *vo, mp_image_t *mpi)
     mpgl_unlock(p->glctx);
 }
 
+static void draw_image_timed(struct vo *vo, mp_image_t *mpi,
+                             struct vo_image_timing *t)
+{
+    struct gl_priv *p = vo->priv;
+    GL *gl = p->gl;
+
+    if (p->vo_flipped)
+        mp_image_vflip(mpi);
+
+    mpgl_lock(p->glctx);
+
+    if (mpi) gl_video_upload_image(p->renderer, mpi);
+    gl_video_render_frame(p->renderer);
+
+    MP_STATS(vo, "prev_vsync: %lld; next_vsync %lld, pts %lld, img %d, "
+             "1: %lld 2: %lld\n", t->prev_vsync, t->next_vsync, t->pts, !!mpi,
+             t->pts - t->prev_vsync, t->pts - t->next_vsync);
+
+    // The playloop calls this last before waiting some time until it decides
+    // to call flip_page(). Tell OpenGL to start execution of the GPU commands
+    // while we sleep (this happens asynchronously).
+    gl->Flush();
+
+    if (p->use_glFinish)
+        gl->Finish();
+
+    mpgl_unlock(p->glctx);
+}
+
 static int query_format(struct vo *vo, uint32_t format)
 {
     struct gl_priv *p = vo->priv;
@@ -468,6 +497,7 @@ const struct vo_driver video_out_opengl = {
     .reconfig = reconfig,
     .control = control,
     .draw_image = draw_image,
+    .draw_image_timed = draw_image_timed,
     .flip_page = flip_page,
     .uninit = uninit,
     .priv_size = sizeof(struct gl_priv),
@@ -483,6 +513,7 @@ const struct vo_driver video_out_opengl_hq = {
     .reconfig = reconfig,
     .control = control,
     .draw_image = draw_image,
+    .draw_image_timed = draw_image_timed,
     .flip_page = flip_page,
     .uninit = uninit,
     .priv_size = sizeof(struct gl_priv),
