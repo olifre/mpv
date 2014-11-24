@@ -571,7 +571,15 @@ static bool render_frame(struct vo *vo)
     int64_t next_vsync = prev_vsync + in->vsync_interval;
     int64_t end_time = pts + duration;
 
-    MP_STATS(vo, "next_vsync %lld, pts %lld, img %d\n", next_vsync, pts, !!img);
+    MP_DBG(vo, "next_vsync %lld, pts %lld, img %d\n", (long long)next_vsync,
+           (long long)pts, !!img);
+    MP_STATS(vo, "event-timed %lld prev_vsync", (long long)prev_vsync);
+    MP_STATS(vo, "event-timed %lld next_vsync", (long long)next_vsync);
+    if (img) {
+        MP_STATS(vo, "event-timed %lld pts", (long long)pts);
+    } else {
+        MP_STATS(vo, "event-timed %lld pts-no-img", (long long)pts);
+    }
 
     if (!(vo->global->opts->frame_dropping & 1) || !in->hasframe_rendered ||
         vo->driver->untimed || vo->driver->encode)
@@ -630,6 +638,7 @@ static bool render_frame(struct vo *vo)
         MP_DBG(vo, "phase: %ld\n", phase);
         MP_STATS(vo, "value %ld phase", phase);
 
+        MP_STATS(vo, "display");
         MP_STATS(vo, "end video");
 
         pthread_mutex_lock(&in->lock);
@@ -694,6 +703,7 @@ static void *vo_thread(void *ptr)
     mpthread_set_name("vo");
 
     int r = vo->driver->preinit(vo) ? -1 : 0;
+    vo->driver->control(vo, VOCTRL_GET_VSYNC_TIMED, &in->vsync_timed);
     mp_rendezvous(vo, r); // init barrier
     if (r < 0)
         return NULL;

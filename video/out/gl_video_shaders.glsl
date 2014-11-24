@@ -184,6 +184,7 @@ uniform float dither_center;
 uniform float filter_param1_l;
 uniform float filter_param1_c;
 uniform vec2 dither_size;
+uniform float inter_coeff;
 
 in vec2 texcoord;
 DECLARE_FRAGPARMS
@@ -341,7 +342,15 @@ void main() {
 #ifndef USE_CONV
 #define USE_CONV 0
 #endif
-#if USE_CONV == CONV_PLANAR
+#ifndef USE_LINEAR_INTERPOLATION
+#define USE_LINEAR_INTERPOLATION 0
+#endif
+#if USE_LINEAR_INTERPOLATION == 1
+    vec4 acolor = mix(texture(texture0, chr_texcoord),
+                      // vec4(1.0, 0.0, 0.0, 1.0),
+                      texture(texture1, chr_texcoord),
+                      inter_coeff);
+#elif USE_CONV == CONV_PLANAR
     vec4 acolor = vec4(SAMPLE_L(texture0, textures_size[0], texcoord).r,
                        SAMPLE_C(texture1, textures_size[1], chr_texcoord).r,
                        SAMPLE_C(texture2, textures_size[2], chr_texcoord).r,

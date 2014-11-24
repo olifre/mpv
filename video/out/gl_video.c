@@ -121,6 +121,13 @@ struct fbotex {
     int vp_x, vp_y, vp_w, vp_h; // viewport of fbo / used part of the texture
 };
 
+struct fbosurface {
+    struct fbotex fbotex;
+    int64_t pts;
+};
+
+#define FBOSURFACES_MAX 2
+
 struct gl_video {
     GL *gl;
 
@@ -138,7 +145,7 @@ struct gl_video {
     GLuint vao;
 
     GLuint osd_programs[SUBBITMAP_COUNT];
-    GLuint indirect_program, scale_sep_program, final_program;
+    GLuint indirect_program, scale_sep_program, final_program, inter_program;
 
     struct osd_state *osd_state;
     struct mpgl_osd *osd;
@@ -177,6 +184,8 @@ struct gl_video {
 
     struct fbotex indirect_fbo;         // RGB target
     struct fbotex scale_sep_fbo;        // first pass when doing 2 pass scaling
+    struct fbosurface surfaces[FBOSURFACES_MAX];
+    size_t surface_num;
 
     // state for luma (0) and chroma (1) scalers
     struct scaler scalers[2];
@@ -617,6 +626,38 @@ static void fbotex_uninit(struct gl_video *p, struct fbotex *fbo)
     }
 }
 
+static void fbosurfaces_uninit(struct gl_video *p, struct fbosurface *surfaces)
+{
+
+    for (int i = 0; i < FBOSURFACES_MAX; i++)
+        if (surfaces[i].fbotex.fbo)
+            fbotex_uninit(p, &surfaces[i].fbotex);
+}
+
+static void fbosurfaces_init(struct gl_video *p, struct fbosurface *surfaces,
+                          int w, int h, GLenum iformat)
+{
+    fbosurfaces_uninit(p, surfaces);
+    for (int i = 0; i < FBOSURFACES_MAX; i++)
+        if (!surfaces[i].fbotex.fbo && w > 0 && h > 0)
+            fbotex_init(p, &surfaces[i].fbotex, w, h, iformat);
+}
+
+
+static void fbosurface_bind(struct gl_video *p, GLuint *texs, int i)
+{
+    GL *gl = p->gl;
+    struct fbotex *fbotex = &p->surfaces[p->surface_num].fbotex;
+    gl->ActiveTexture(GL_TEXTURE0 + i);
+    gl->BindTexture(p->gl_target, p->surfaces[p->surface_num].fbotex.texture);
+    texs[i] = fbotex->texture;
+}
+
+static size_t fbosurface_next(struct gl_video *p)
+{
+    return (p->surface_num + 1) % FBOSURFACES_MAX;
+}
+
 static void matrix_ortho2d(float m[3][3], float x0, float x1,
                            float y0, float y1)
 {
@@ -793,6 +834,7 @@ static void update_all_uniforms(struct gl_video *p)
     update_uniforms(p, p->indirect_program);
     update_uniforms(p, p->scale_sep_program);
     update_uniforms(p, p->final_program);
+    update_uniforms(p, p->inter_program);
 }
 
 #define SECTION_HEADER "#!section "
@@ -1102,6 +1144,7 @@ static void compile_shaders(struct gl_video *p)
 
     char *header_conv = talloc_strdup(tmp, "");
     char *header_final = talloc_strdup(tmp, "");
+    char *header_inter = talloc_strdup(tmp, "");
     char *header_sep = NULL;
 
     if (p->image_desc.id == IMGFMT_NV12 || p->image_desc.id == IMGFMT_NV21) {
@@ -1149,6 +1192,8 @@ static void compile_shaders(struct gl_video *p)
     } else {
         shader_setup_scaler(&header_final, &p->scalers[0], -1);
     }
+
+    shader_def_opt(&header_inter, "USE_LINEAR_INTERPOLATION", 1);
 
     // We want to do scaling in linear light. Scaling is closely connected to
     // texture sampling due to how the shader is structured (or if GL bilinear
@@ -1207,6 +1252,10 @@ static void compile_shaders(struct gl_video *p)
     p->final_program =
         create_program(p, "final", header_final, vertex_shader, s_video);
 
+    header_inter = t_concat(tmp, header, header_inter);
+    p->inter_program =
+        create_program(p, "inter", header_inter, vertex_shader, s_video);
+
     debug_check_gl(p, "shader compilation");
 
     talloc_free(tmp);
@@ -1227,6 +1276,7 @@ static void delete_shaders(struct gl_video *p)
     delete_program(gl, &p->indirect_program);
     delete_program(gl, &p->scale_sep_program);
     delete_program(gl, &p->final_program);
+    delete_program(gl, &p->inter_program);
 }
 
 static void get_scale_factors(struct gl_video *p, double xy[2])
@@ -1653,6 +1703,7 @@ static void uninit_video(struct gl_video *p)
 
     fbotex_uninit(p, &p->indirect_fbo);
     fbotex_uninit(p, &p->scale_sep_fbo);
+    fbosurfaces_uninit(p, p->surfaces);
 }
 
 static void change_dither_trafo(struct gl_video *p)
@@ -1682,6 +1733,8 @@ struct pass {
     // If true, render source (f) to dst, instead of the full dest. fbo viewport
     bool use_dst;
     struct mp_rect dst;
+    bool use_src;
+    struct mp_rect src;
     int flags; // for write_quad
 };
 
@@ -1711,6 +1764,9 @@ static void handle_pass(struct gl_video *p, struct pass *chain,
         .y1 = chain->f.vp_y + chain->f.vp_h,
     };
 
+    if (chain->use_src)
+        src = chain->src;
+
     struct mp_rect dst = {-1, -1, 1, 1};
     if (chain->use_dst)
         dst = chain->dst;
@@ -1734,7 +1790,7 @@ static void handle_pass(struct gl_video *p, struct pass *chain,
 }
 
 // (fbo==0 makes BindFramebuffer select the screen backbuffer)
-void gl_video_render_frame(struct gl_video *p, int fbo)
+void gl_video_render_frame(struct gl_video *p, int fbo, struct frame_timing *t)
 {
     GL *gl = p->gl;
     struct video_image *vimg = &p->image;
@@ -1803,7 +1859,67 @@ void gl_video_render_frame(struct gl_video *p, int fbo)
     chain.flags = (p->image_params.rotate % 90 ? 0 : p->image_params.rotate / 90)
                 | (vimg->image_flipped ? 4 : 0);
 
-    handle_pass(p, &chain, &screen, p->final_program);
+    if (!t) {
+        handle_pass(p, &chain, &screen, p->final_program);
+    } else {
+        GLuint imgtexsurfaces[4] = {0};
+        double inter_coeff = 0.0;
+        int64_t prev_pts = p->surfaces[fbosurface_next(p)].pts;
+
+        if (prev_pts != t->pts) {
+            MP_STATS(p, "new-pts");
+            struct fbotex *fbotex = &p->surfaces[p->surface_num].fbotex;
+            handle_pass(p, &chain, fbotex, p->final_program);
+            p->surfaces[p->surface_num].pts = t->pts;
+            fbosurface_bind(p, imgtexsurfaces, 0);
+            p->surface_num = fbosurface_next(p);
+            fbosurface_bind(p, imgtexsurfaces, 1);
+            gl->ActiveTexture(GL_TEXTURE0);
+            MP_DBG(p, "frame ppts: %lld, pts: %lld, vsync: %lld, DIFF: %lld\n",
+                      (long long)prev_pts, (long long)t->pts,
+                      (long long)t->next_vsync, (long long)t->next_vsync - t->pts);
+            if (prev_pts < t->next_vsync && t->pts > t->next_vsync) {
+                double N = t->next_vsync - prev_pts;
+                double P = t->pts - prev_pts;
+                double prev_pts_component = N / P;
+                inter_coeff = 1 - prev_pts_component;
+                MP_DBG(p, "inter frame ppts: %lld, pts: %lld, "
+                       "vsync: %lld, mix: %f\n",
+                       (long long)prev_pts, (long long)t->pts,
+                       (long long)t->next_vsync, inter_coeff);
+                MP_STATS(p, "frame-mix");
+            }
+        } else {
+            MP_STATS(p, "old-pts");
+            p->surface_num = fbosurface_next(p);
+            fbosurface_bind(p, imgtexsurfaces, 0);
+            p->surface_num = fbosurface_next(p);
+            fbosurface_bind(p, imgtexsurfaces, 1);
+            gl->ActiveTexture(GL_TEXTURE0);
+        }
+
+        // the value is scaled to fit in the graph with the completely
+        // unrelated "phase" value (which is stupid)
+        MP_STATS(p, "value-timed %lld %f mix-value",
+                 (long long)t->pts, inter_coeff * 10000);
+
+        chain.use_dst = true;
+        chain.dst = p->dst_rect;
+        chain.use_src = true;
+        chain.src = p->dst_rect;
+        chain.flags = (1 << 2); // (needs flip, wut)
+        chain.f.texture = imgtexsurfaces[0];
+        chain.f.tex_w = p->surfaces[p->surface_num].fbotex.tex_w;
+        chain.f.tex_h = p->surfaces[p->surface_num].fbotex.tex_h;
+
+        gl->UseProgram(p->inter_program);
+        GLint loc = gl->GetUniformLocation(p->inter_program, "inter_coeff");
+        if (loc >= 0) {
+            gl->Uniform1f(loc, inter_coeff);
+        }
+
+        handle_pass(p, &chain, &screen, p->inter_program);
+    }
 
     gl->UseProgram(0);
 
@@ -1821,9 +1937,10 @@ draw_osd:
 
 static void update_window_sized_objects(struct gl_video *p)
 {
+    int w = p->dst_rect.x1 - p->dst_rect.x0;
+    int h = p->dst_rect.y1 - p->dst_rect.y0;
+
     if (p->scale_sep_program) {
-        int w = p->dst_rect.x1 - p->dst_rect.x0;
-        int h = p->dst_rect.y1 - p->dst_rect.y0;
         if ((p->image_params.rotate % 180) == 90)
             MPSWAP(int, w, h);
         if (h > p->scale_sep_fbo.tex_h) {
@@ -1836,6 +1953,10 @@ static void update_window_sized_objects(struct gl_video *p)
         }
         p->scale_sep_fbo.vp_w = p->image_w;
         p->scale_sep_fbo.vp_h = h;
+    }
+
+    if (p->opts.smoothmotion) {
+        fbosurfaces_init(p, p->surfaces, p->vp_w, p->vp_h, p->opts.fbo_format);
     }
 }
 
@@ -2639,7 +2760,7 @@ void gl_video_resize_redraw(struct gl_video *p, int w, int h)
 {
     p->vp_w = w;
     p->vp_h = h;
-    gl_video_render_frame(p, 0);
+    gl_video_render_frame(p, 0, NULL);
 }
 
 void gl_video_set_hwdec(struct gl_video *p, struct gl_hwdec *hwdec)

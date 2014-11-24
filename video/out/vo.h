@@ -108,6 +108,8 @@ enum mp_voctrl {
     VOCTRL_GET_PREF_DEINT,              // int*
 
     VOCTRL_SET_LIBMPV_OPENGL_CB_CONTEXT,// struct mpv_opengl_cb_context*
+
+    VOCTRL_GET_VSYNC_TIMED,             // bool*
 };
 
 // VOCTRL_SET_EQUALIZER
