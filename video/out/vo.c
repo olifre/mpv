@@ -604,7 +604,9 @@ static bool render_frame(struct vo *vo)
         }
 
         int64_t target = pts - in->flip_queue_offset;
-        while (!in->vsync_timed) {
+        if (in->vsync_timed)
+            target = next_vsync - MPMIN(in->vsync_interval / 3, 4e3);
+        while (1) {
             int64_t now = mp_time_us();
             if (target <= now)
                 break;
