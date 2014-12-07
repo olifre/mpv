@@ -71,7 +71,6 @@ struct gl_priv {
     int use_gl_debug;
     int allow_sw;
     int swap_interval;
-    int smoothmotion;
     char *backend;
 
     int vo_flipped;
@@ -400,7 +399,7 @@ static int control(struct vo *vo, uint32_t request, void *data)
         return reparse_cmdline(p, arg);
     }
     case VOCTRL_GET_VSYNC_TIMED:
-        *(bool *)data = p->smoothmotion;
+        *(bool *)data = p->renderer_opts->smoothmotion;
         return VO_TRUE;
     }
 
@@ -481,7 +480,6 @@ err_out:
 static const struct m_option options[] = {
     OPT_FLAG("glfinish", use_glFinish, 0),
     OPT_FLAG("waitvsync", waitvsync, 0),
-    OPT_FLAG("smoothmotion", smoothmotion, 0),
     OPT_INT("swapinterval", swap_interval, 0, OPTDEF_INT(1)),
     OPT_FLAG("debug", use_gl_debug, 0),
     OPT_STRING_VALIDATE("backend", backend, 0, mpgl_validate_backend_opt),

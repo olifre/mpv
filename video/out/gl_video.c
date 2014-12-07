@@ -404,6 +404,9 @@ const struct m_sub_options gl_video_conf = {
                     {"blend", 2})),
         OPT_FLAG("rectangle-textures", use_rectangle, 0),
         OPT_COLOR("background", background, 0),
+        OPT_FLAG("smoothmotion", smoothmotion, 0),
+        OPT_FLOAT("smoothmotion-threshold", smoothmotion_threshold,
+                   CONF_RANGE, .min = 0, .max = 0.5),
         {0}
     },
     .size = sizeof(struct gl_video_opts),
@@ -1882,7 +1885,10 @@ void gl_video_render_frame(struct gl_video *p, int fbo, struct frame_timing *t)
                 double N = t->next_vsync - prev_pts;
                 double P = t->pts - prev_pts;
                 double prev_pts_component = N / P;
+                float ts = p->opts.smoothmotion_threshold;
                 inter_coeff = 1 - prev_pts_component;
+                inter_coeff = inter_coeff < 0.0 + ts ? 0.0 : inter_coeff;
+                inter_coeff = inter_coeff > 1.0 - ts ? 1.0 : inter_coeff;
                 MP_DBG(p, "inter frame ppts: %lld, pts: %lld, "
                        "vsync: %lld, mix: %f\n",
                        (long long)prev_pts, (long long)t->pts,
