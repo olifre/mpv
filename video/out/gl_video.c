@@ -1897,9 +1897,13 @@ void gl_video_render_frame(struct gl_video *p, int fbo, struct frame_timing *t)
         },
     };
 
-    struct fbotex *indirect_target = p->inter_program ?
-        &p->surfaces[p->surface_num].fbotex :
-        &p->indirect_fbo;
+    int64_t prev_pts = p->surfaces[fbosurface_next(p)].pts;
+    struct fbotex *indirect_target;
+    if (p->inter_program && prev_pts != t->pts) {
+        indirect_target = &p->surfaces[p->surface_num].fbotex;
+    } else {
+        indirect_target = &p->indirect_fbo;
+    }
 
     handle_pass(p, &chain, indirect_target, p->indirect_program);
 
