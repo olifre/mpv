@@ -647,13 +647,11 @@ static void fbosurfaces_init(struct gl_video *p, struct fbosurface *surfaces,
 }
 
 
-static void fbosurface_bind(struct gl_video *p, GLuint *texs, int i)
+static void fbosurface_bind(struct gl_video *p, int i)
 {
     GL *gl = p->gl;
-    struct fbotex *fbotex = &p->surfaces[p->surface_num].fbotex;
     gl->ActiveTexture(GL_TEXTURE0 + i);
     gl->BindTexture(p->gl_target, p->surfaces[p->surface_num].fbotex.texture);
-    texs[i] = fbotex->texture;
 }
 
 static size_t fbosurface_next(struct gl_video *p)
@@ -1815,16 +1813,15 @@ static void gl_video_interpolate_frame(struct gl_video *p,
                                        struct frame_timing *t)
 {
     GL *gl = p->gl;
-    GLuint imgtexsurfaces[4] = {0};
     double inter_coeff = 0.0;
     int64_t prev_pts = p->surfaces[fbosurface_next(p)].pts;
 
-    if (prev_pts != t->pts) {
+    if (prev_pts < t->pts) {
         MP_STATS(p, "new-pts");
         // fbosurface 0 is already bound from the caller
         p->surfaces[p->surface_num].pts = t->pts;
         p->surface_num = fbosurface_next(p);
-        fbosurface_bind(p, imgtexsurfaces, 1);
+        fbosurface_bind(p, 1);
         gl->ActiveTexture(GL_TEXTURE0);
         MP_DBG(p, "frame ppts: %lld, pts: %lld, vsync: %lld, DIFF: %lld\n",
                   (long long)prev_pts, (long long)t->pts,
@@ -1847,14 +1844,14 @@ static void gl_video_interpolate_frame(struct gl_video *p,
             // unrelated "phase" value (which is stupid)
             MP_STATS(p, "value-timed %lld %f mix-value",
                      (long long)t->pts, inter_coeff * 10000);
-
-            gl->UseProgram(p->inter_program);
-            GLint loc = gl->GetUniformLocation(p->inter_program, "inter_coeff");
-            if (loc >= 0)
-                gl->Uniform1f(loc, inter_coeff);
-            handle_pass(p, chain, &p->inter_fbo, p->inter_program);
         }
     }
+
+    gl->UseProgram(p->inter_program);
+    GLint loc = gl->GetUniformLocation(p->inter_program, "inter_coeff");
+    if (loc >= 0)
+        gl->Uniform1f(loc, inter_coeff);
+    handle_pass(p, chain, &p->inter_fbo, p->inter_program);
 }
 
 // (fbo==0 makes BindFramebuffer select the screen backbuffer)
@@ -1899,7 +1896,7 @@ void gl_video_render_frame(struct gl_video *p, int fbo, struct frame_timing *t)
 
     int64_t prev_pts = p->surfaces[fbosurface_next(p)].pts;
     struct fbotex *indirect_target;
-    if (p->inter_program && t && prev_pts != t->pts) {
+    if (p->inter_program && t && prev_pts < t->pts) {
         indirect_target = &p->surfaces[p->surface_num].fbotex;
     } else {
         indirect_target = &p->indirect_fbo;

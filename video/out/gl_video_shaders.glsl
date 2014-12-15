@@ -347,8 +347,8 @@ void main() {
 #endif
 #if USE_LINEAR_INTERPOLATION == 1
     vec4 acolor = mix(
-        texture(texture0, chr_texcoord),
-        texture(texture1, chr_texcoord),
+        texture(texture0, texcoord),
+        texture(texture1, texcoord),
         inter_coeff);
 #elif USE_CONV == CONV_PLANAR
     vec4 acolor = vec4(SAMPLE_L(texture0, textures_size[0], texcoord).r,
