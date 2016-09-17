@@ -42,6 +42,50 @@
 
 int dvb_get_tuner_types(int fe_fd, struct mp_log *log, int** tuner_types)
 {
+    // Query old API first, drivers don't always implement newer ENUM_DELSYS.
+    mp_verbose(log, "Querying tuner type via pre-DVBv5 API for frontend FD %d\n",
+               fe_fd);
+    struct dvb_frontend_info fe_info;
+    int tuner_query_pre_v5 = 0;
+    int res = ioctl(fe_fd, FE_GET_INFO, &fe_info);
+    if (res < 0) {
+        mp_err(log, "FE_GET_INFO error: %d, FD: %d\n\n", errno, fe_fd);
+    } else {
+        mp_verbose(log, "Queried tuner type of device named '%s', FD: %d\n",
+                   fe_info.name, fe_fd);
+        switch (fe_info.type) {
+        case FE_OFDM:
+            mp_verbose(log, "Tuner type seems to be DVB-T\n");
+            *tuner_types = talloc_array(NULL, int, 1);
+            (*tuner_types)[0] = TUNER_TER;
+            tuner_query_pre_v5 = 1;
+            break;
+        case FE_QPSK:
+            mp_verbose(log, "Tuner type seems to be DVB-S\n");
+            *tuner_types = talloc_array(NULL, int, 1);
+            (*tuner_types)[0] = TUNER_SAT;
+            tuner_query_pre_v5 = 1;
+            break;
+        case FE_QAM:
+            mp_verbose(log, "Tuner type seems to be DVB-C\n");
+            *tuner_types = talloc_array(NULL, int, 1);
+            (*tuner_types)[0] = TUNER_CBL;
+            tuner_query_pre_v5 = 1;
+            break;
+#ifdef DVB_ATSC
+        case FE_ATSC:
+            mp_verbose(log, "Tuner type seems to be DVB-ATSC\n");
+            *tuner_types = talloc_array(NULL, int, 1);
+            (*tuner_types)[0] = TUNER_ATSC;
+            tuner_query_pre_v5 = 1;
+            break;
+#endif
+        default:
+            mp_err(log, "Unknown tuner type: %d\n", fe_info.type);
+            tuner_query_pre_v5 = 0;
+            break;
+        }
+    }
 #ifdef DVB_USE_S2API
     /* S2API is the DVB API new since 2.6.28.
        It allows to query frontends with multiple delivery systems. */
@@ -50,16 +94,23 @@ int dvb_get_tuner_types(int fe_fd, struct mp_log *log, int** tuner_types)
     mp_verbose(log, "Querying tuner type via DVBv5 API for frontend FD %d\n",
                fe_fd);
     if ((ioctl(fe_fd, FE_GET_PROPERTY, &cmdseq)) < -0) {
-      mp_err(log, "FE_GET_PROPERTY error: %d, FD: %d\n\n", errno, fe_fd);
-      return 0;
+      mp_err(log, "DVBv5: FE_GET_PROPERTY(DTV_ENUM_DELSYS) error: %d, FD: %d\n\n", errno, fe_fd);
+      // Fallback to result from pre-v5-query. 
+      return tuner_query_pre_v5;
     }
     int num_tuner_types = p[0].u.buffer.len;
     mp_verbose(log, "Number of supported delivery systems: %d\n", num_tuner_types);
     if (num_tuner_types == 0) {
-      mp_err(log, "Frontend FD %d returned no delivery systems!", fe_fd);
-      return 0;
+      mp_err(log, "DVBv5: Frontend FD %d returned no delivery systems!\n", fe_fd);
+      // Fallback to result from pre-v5-query. 
+      return tuner_query_pre_v5;
     }
-    (*tuner_types) = talloc_array(NULL, int, num_tuner_types);
+    if (tuner_query_pre_v5 > 0) {
+        mp_verbose(log, "DVBv5 query worked, discarding result from old query.\n");
+        talloc_realloc(NULL, (*tuner_types), int, num_tuner_types);
+    } else {
+        (*tuner_types) = talloc_array(NULL, int, num_tuner_types);
+    }
     int supported_tuners = 0;
     for(;p[0].u.buffer.len > 0; p[0].u.buffer.len--) {
       fe_delivery_system_t delsys = p[0].u.buffer.data[p[0].u.buffer.len - 1];
@@ -96,42 +147,7 @@ int dvb_get_tuner_types(int fe_fd, struct mp_log *log, int** tuner_types)
     }
     return supported_tuners;
 #else
-    struct dvb_frontend_info fe_info;
-    int res = ioctl(fe_fd, FE_GET_INFO, &fe_info);
-    if (res < 0) {
-        mp_err(log, "FE_GET_INFO error: %d, FD: %d\n\n", errno, fe_fd);
-        return 0;
-    }
-
-    mp_verbose(log, "Queried tuner type of device named '%s', FD: %d\n",
-               fe_info.name, fe_fd);
-    switch (fe_info.type) {
-    case FE_OFDM:
-        mp_verbose(log, "Tuner type seems to be DVB-T\n");
-        *tuner_types = talloc_array(NULL, int, 1);
-        (*tuner_types)[0] = TUNER_TER;
-        return 1;
-    case FE_QPSK:
-        mp_verbose(log, "Tuner type seems to be DVB-S\n");
-        *tuner_types = talloc_array(NULL, int, 1);
-        (*tuner_types)[0] = TUNER_SAT;
-        return 1;
-    case FE_QAM:
-        mp_verbose(log, "Tuner type seems to be DVB-C\n");
-        *tuner_types = talloc_array(NULL, int, 1);
-        (*tuner_types)[0] = TUNER_CBL;
-        return 1;
-#ifdef DVB_ATSC
-    case FE_ATSC:
-        mp_verbose(log, "Tuner type seems to be DVB-ATSC\n");
-        *tuner_types = talloc_array(NULL, int, 1);
-        (*tuner_types)[0] = TUNER_ATSC;
-        return 1;
-#endif
-    default:
-        mp_err(log, "Unknown tuner type: %d\n", fe_info.type);
-        return 0;
-    }
+    return tuner_query_pre_v5;
 #endif
 }
 
