@@ -1005,12 +1005,13 @@ static int dvb_open(stream_t *stream)
 #define MAX_CARDS 4
 dvb_state_t *dvb_get_state(stream_t *stream)
 {
+    // Need to re-get config in any case, not part of global state. 
+    stream->priv = mp_get_config_group(stream, stream->global, &stream_dvb_conf);
     if (global_dvb_state != NULL) {
       return global_dvb_state;
     }
     struct mp_log *log = stream->log;
     struct mpv_global *global = stream->global;
-    stream->priv = mp_get_config_group(stream, stream->global, &stream_dvb_conf);
     dvb_priv_t *priv = stream->priv;
     int type, size;
     char filename[30], *name;
