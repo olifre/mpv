@@ -271,11 +271,11 @@ static dvb_channels_list_t *dvb_get_channels(struct mp_log *log,
          transm[256], gi[256], vpid_str[256], apid_str[256], tpid_str[256],
          vdr_par_str[256], vdr_loc_str[256];
     const char *cbl_conf =
-        "%d:%255[^:]:%d:%255[^:]:%255[^:]:%255[^:]:%255[^:]\n";
-    const char *sat_conf = "%d:%c:%d:%d:%255[^:]:%255[^:]\n";
+        "%d:%255[^:]:%d:%255[^:]:%255[^:]:%255[^:]:%255[^:]\n%n";
+    const char *sat_conf = "%d:%c:%d:%d:%255[^:]:%255[^:]\n%n";
     const char *ter_conf =
-        "%d:%255[^:]:%255[^:]:%255[^:]:%255[^:]:%255[^:]:%255[^:]:%255[^:]:%255[^:]:%255[^:]:%255[^:]\n";
-    const char *atsc_conf = "%d:%255[^:]:%255[^:]:%255[^:]\n";
+        "%d:%255[^:]:%255[^:]:%255[^:]:%255[^:]:%255[^:]:%255[^:]:%255[^:]:%255[^:]:%255[^:]:%255[^:]:%*d\n%n";
+    const char *atsc_conf = "%d:%255[^:]:%255[^:]:%255[^:]\n%n";
     const char *vdr_conf =
         "%d:%255[^:]:%255[^:]:%d:%255[^:]:%255[^:]:%255[^:]:%*255[^:]:%d:%*d:%*d:%*d\n%n";
 
@@ -453,7 +453,12 @@ static dvb_channels_list_t *dvb_get_channels(struct mp_log *log,
             case SYS_ISDBT:
                 fields = sscanf(&line[k], ter_conf,
                                 &ptr->freq, inv, bw, cr, tmp_lcr, mod,
-                                transm, gi, tmp_hier, vpid_str, apid_str);
+                                transm, gi, tmp_hier, vpid_str, apid_str, &num_chars);
+                if (num_chars != strlen(&line[k])) {
+                    mp_verbose(log, "skipping assumed %s channel, only %d chars parsed\n",
+                               get_dvb_delsys(delsys), num_chars);
+                    continue;
+                }
                 mp_verbose(log, "%s, NUM: %d, NUM_FIELDS: %d, NAME: %s, FREQ: %d",
                            get_dvb_delsys(delsys), list->NUM_CHANNELS,
                            fields, ptr->name, ptr->freq);
@@ -462,7 +467,12 @@ static dvb_channels_list_t *dvb_get_channels(struct mp_log *log,
             case SYS_DVBC_ANNEX_C:
                 fields = sscanf(&line[k], cbl_conf,
                                 &ptr->freq, inv, &ptr->srate,
-                                cr, mod, vpid_str, apid_str);
+                                cr, mod, vpid_str, apid_str, &num_chars);
+                if (num_chars != strlen(&line[k])) {
+                    mp_verbose(log, "skipping assumed %s channel, only %d chars parsed\n",
+                               get_dvb_delsys(delsys), num_chars);
+                    continue;
+                }
                 mp_verbose(log, "%s, NUM: %d, NUM_FIELDS: %d, NAME: %s, FREQ: %d, "
                            "SRATE: %d",
                            get_dvb_delsys(delsys),
@@ -472,7 +482,12 @@ static dvb_channels_list_t *dvb_get_channels(struct mp_log *log,
             case SYS_ATSC:
             case SYS_DVBC_ANNEX_B:
                 fields = sscanf(&line[k], atsc_conf,
-                                &ptr->freq, mod, vpid_str, apid_str);
+                                &ptr->freq, mod, vpid_str, apid_str, &num_chars);
+                if (num_chars != strlen(&line[k])) {
+                    mp_verbose(log, "skipping assumed %s channel, only %d chars parsed\n",
+                               get_dvb_delsys(delsys), num_chars);
+                    continue;
+                }
                 mp_verbose(log, "%s, NUM: %d, NUM_FIELDS: %d, NAME: %s, FREQ: %d\n",
                            get_dvb_delsys(delsys), list->NUM_CHANNELS,
                            fields, ptr->name, ptr->freq);
@@ -482,7 +497,12 @@ static dvb_channels_list_t *dvb_get_channels(struct mp_log *log,
                 fields = sscanf(&line[k], sat_conf,
                                 &ptr->freq, &ptr->pol, &ptr->diseqc, &ptr->srate,
                                 vpid_str,
-                                apid_str);
+                                apid_str, &num_chars);
+                if (num_chars != strlen(&line[k])) {
+                    mp_verbose(log, "skipping assumed %s channel, only %d chars parsed\n",
+                               get_dvb_delsys(delsys), num_chars);
+                    continue;
+                }
                 ptr->pol = mp_toupper(ptr->pol);
                 ptr->freq *=  1000UL;
                 ptr->srate *=  1000UL;
